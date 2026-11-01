@@ -17,7 +17,6 @@ class App {
   }
 
   _bindAll() {
-    // Home
     document.getElementById('btnHost').addEventListener('click', () => this.hostRoom());
 
     const joinBtn = document.getElementById('btnJoin');
@@ -26,7 +25,7 @@ class App {
     joinBtn.addEventListener('click', () => {
       const code = joinInput.value.trim().toUpperCase();
       if (code.length !== CONFIG.CODE_LENGTH) {
-        ui.toast('Kode harus 6 karakter');
+        ui.toast('Kode harus ' + CONFIG.CODE_LENGTH + ' karakter');
         return;
       }
       this.joinRoom(code);
@@ -43,21 +42,14 @@ class App {
       if (e.key === 'Enter') joinBtn.click();
     });
 
-    // Wait
     document.getElementById('btnCancelWait').addEventListener('click', () => this.disconnect());
-
-    // Transfer
     document.getElementById('btnDisconnect').addEventListener('click', () => this.disconnect());
 
     const fileInput = document.getElementById('fileInput');
     const btnPick = document.getElementById('btnPickFile');
     const dropCard = document.getElementById('dropCard');
 
-    btnPick.addEventListener('click', e => {
-      e.stopPropagation();
-      fileInput.click();
-    });
-
+    btnPick.addEventListener('click', e => { e.stopPropagation(); fileInput.click(); });
     dropCard.addEventListener('click', () => fileInput.click());
 
     fileInput.addEventListener('change', e => {
@@ -80,7 +72,6 @@ class App {
       }
     });
 
-    // Prevent browser from opening dropped files anywhere else
     window.addEventListener('dragover', e => e.preventDefault());
     window.addEventListener('drop', e => e.preventDefault());
   }
@@ -88,8 +79,7 @@ class App {
   async hostRoom() {
     ui.setStatus('Menyiapkan...', 'wait');
 
-    let attempts = 0;
-    while (attempts < CONFIG.MAX_HOST_ATTEMPTS) {
+    for (let attempt = 0; attempt < CONFIG.MAX_HOST_ATTEMPTS; attempt++) {
       const code = this._generateCode();
       const pm = new PeerManager();
 
@@ -102,18 +92,17 @@ class App {
         ui.setStatus('Menunggu', 'wait');
         return;
       } catch (e) {
-        if (e && e.type === 'unavailable-id') {
-          attempts++;
-          continue;
-        }
-        ui.toast('Gagal membuat room: ' + (e?.message || 'unknown'));
+        try { pm.destroy(); } catch (_) {}
+        if (e && e.type === 'unavailable-id') continue;
+        console.error('[App] host failed', e);
+        ui.toast('Gagal buat room: ' + (e && e.message || 'unknown'));
         ui.setStatus('Siap', 'idle');
         ui.showScreen('home');
         return;
       }
     }
 
-    ui.toast('Kode room sudah terpakai, coba lagi');
+    ui.toast('Kode room bentrok terus, coba lagi');
     ui.setStatus('Siap', 'idle');
   }
 
@@ -126,10 +115,13 @@ class App {
       this._setupConnection(pm, 'guest');
       this.roomCode = code;
     } catch (e) {
+      console.error('[App] join failed', e);
       const msg =
-        e?.type === 'peer-unavailable'
+        e && e.type === 'peer-unavailable'
           ? 'Kode tidak ditemukan atau sudah tidak aktif'
-          : 'Gagal terhubung: ' + (e?.message || 'unknown');
+          : e && e.message === 'timeout'
+            ? 'Timeout, cek koneksi'
+            : 'Gagal terhubung: ' + (e && e.message || 'unknown');
       ui.toast(msg);
       ui.setStatus('Siap', 'idle');
       try { pm.destroy(); } catch (_) {}
@@ -144,24 +136,28 @@ class App {
     transfer.init();
     this.transfer = transfer;
 
-    pm.on('open', () => {
+    const onOpen = () => {
       ui.setStatus('Terhubung', 'online');
       ui.setConnLabel('Terhubung');
       ui.showScreen('transfer');
-    });
+    };
+
+    pm.on('open', onOpen);
 
     pm.on('close', () => {
       ui.toast('Koneksi terputus');
       this.reset();
     });
 
-    pm.on('peer-disconnected', () => {
-      ui.setConnLabel('Terputus');
-    });
+    pm.on('peer-disconnected', () => ui.setConnLabel('Terputus'));
+    pm.on('peer-close', () => this.reset());
+    pm.on('error', err => console.warn('[App] peer error', err && err.type));
 
-    pm.on('error', err => {
-      console.warn('[Peer error]', err);
-    });
+    // FIX: kalau koneksi sudah open sebelum handler ini terpasang (race di guest),
+    // panggil onOpen langsung
+    if (pm.isOpen()) {
+      onOpen();
+    }
   }
 
   disconnect() {
@@ -177,9 +173,7 @@ class App {
   }
 
   reset() {
-    if (this.peer) {
-      try { this.peer.destroy(); } catch (e) {}
-    }
+    if (this.peer) { try { this.peer.destroy(); } catch (e) {} }
     this.peer = null;
     this.transfer = null;
     this.role = null;
@@ -192,11 +186,19 @@ class App {
   _generateCode() {
     const alphabet = CONFIG.CODE_ALPHABET;
     const len = CONFIG.CODE_LENGTH;
-    const arr = new Uint8Array(len);
-    crypto.getRandomValues(arr);
     let out = '';
-    for (let i = 0; i < len; i++) out += alphabet[arr[i] % alphabet.length];
-    return out;
+
+    try {
+      const arr = new Uint8Array(len);
+      crypto.getRandomValues(arr);
+      for (let i = 0; i < len; i++) out += alphabet[arr[i] % alphabet.length];
+      return out;
+    } catch (e) {
+      for (let i = 0; i < len; i++) {
+        out += alphabet[Math.floor(Math.random() * alphabet.length)];
+      }
+      return out;
+    }
   }
 }
 
