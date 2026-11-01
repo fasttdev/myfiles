@@ -7,9 +7,10 @@ export class FileTransfer {
     this.queue = [];
     this.processing = false;
     this.receiving = null;
-    this.currentSendId = null;
     this._bound = false;
   }
+
+  _log(...a) { if (CONFIG.DEBUG) console.log('[Transfer]', ...a); }
 
   init() {
     if (this._bound) return;
@@ -19,13 +20,16 @@ export class FileTransfer {
   }
 
   addFiles(fileList) {
-    for (const f of fileList) this.queue.push(f);
+    const arr = Array.from(fileList);
+    if (!arr.length) return;
+    for (const f of arr) this.queue.push(f);
+    this._log('queued', arr.length, 'file(s)');
     this._processNext();
   }
 
   async _processNext() {
     if (this.processing) return;
-    if (this.queue.length === 0) return;
+    if (!this.queue.length) return;
 
     const file = this.queue.shift();
     this.processing = true;
@@ -33,20 +37,18 @@ export class FileTransfer {
     try {
       await this._sendFile(file);
     } catch (e) {
-      console.error('[FileTransfer]', e);
-      this.ui.toast('Gagal mengirim file: ' + (e?.message || 'unknown'));
+      console.error('[Transfer] send failed', e);
+      this.ui.toast('Gagal kirim file: ' + (e && e.message || 'unknown'));
     }
 
     this.processing = false;
-    if (this.queue.length > 0) this._processNext();
+    if (this.queue.length) this._processNext();
   }
 
   async _sendFile(file) {
     if (!this.peer.isOpen()) throw new Error('Koneksi tidak aktif');
 
     const id = this._genId();
-    this.currentSendId = id;
-
     const meta = {
       type: 'file-start',
       id,
@@ -55,9 +57,11 @@ export class FileTransfer {
       mime: file.type || 'application/octet-stream',
     };
 
+    this._log('sending file-start', meta);
+
     this.ui.addTransferItem({ id, name: file.name, size: file.size, direction: 'send' });
 
-    if (!this.peer.send(meta)) throw new Error('Koneksi terputus');
+    if (!this.peer.send(JSON.stringify(meta))) throw new Error('Gagal kirim meta');
 
     let offset = 0;
     const CHUNK = CONFIG.CHUNK_SIZE;
@@ -72,16 +76,15 @@ export class FileTransfer {
 
       if (dc) await this._waitForDrain(dc);
 
-      const ok = this.peer.send(buf);
-      if (!ok) throw new Error('Koneksi terputus');
+      if (!this.peer.send(buf)) throw new Error('Koneksi terputus');
 
       offset = end;
       this.ui.updateProgress(id, offset, file.size);
     }
 
-    this.peer.send({ type: 'file-end', id });
+    this._log('sending file-end', id);
+    this.peer.send(JSON.stringify({ type: 'file-end', id }));
     this.ui.completeTransfer(id, 'send');
-    this.currentSendId = null;
   }
 
   _waitForDrain(dc) {
@@ -90,34 +93,59 @@ export class FileTransfer {
     if (dc.bufferedAmount < HIGH) return Promise.resolve();
 
     return new Promise(resolve => {
-      const check = () => {
-        if (dc.bufferedAmount <= LOW) {
-          cleanup();
-          resolve();
-        }
-      };
+      dc.bufferedAmountLowThreshold = LOW;
+      let poll = null;
       const cleanup = () => {
         dc.removeEventListener('bufferedamountlow', check);
-        clearInterval(poll);
+        if (poll) clearInterval(poll);
       };
-      dc.bufferedAmountLowThreshold = LOW;
+      const check = () => {
+        if (dc.bufferedAmount <= LOW) { cleanup(); resolve(); }
+      };
       dc.addEventListener('bufferedamountlow', check);
-      const poll = setInterval(check, 100);
+      poll = setInterval(check, 80);
     });
   }
 
   _handleData(data) {
-    const isControl =
-      typeof data === 'object' &&
-      data !== null &&
-      !(data instanceof ArrayBuffer) &&
-      !(data instanceof Uint8Array);
+    try {
+      if (typeof data === 'string') {
+        let msg;
+        try { msg = JSON.parse(data); } catch (e) { return; }
+        if (msg && typeof msg.type === 'string') this._handleControl(msg);
+        return;
+      }
 
-    if (isControl) this._handleControl(data);
-    else this._handleChunk(data);
+      if (data instanceof ArrayBuffer) {
+        this._handleChunk(data);
+        return;
+      }
+
+      if (data instanceof Uint8Array) {
+        this._handleChunk(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
+        return;
+      }
+
+      if (data && data.buffer instanceof ArrayBuffer && typeof data.byteLength === 'number') {
+        const off = data.byteOffset || 0;
+        this._handleChunk(data.buffer.slice(off, off + data.byteLength));
+        return;
+      }
+
+      if (data && typeof data === 'object' && typeof data.type === 'string') {
+        this._handleControl(data);
+        return;
+      }
+
+      this._log('unknown data type', typeof data, data);
+    } catch (e) {
+      console.error('[Transfer] handleData error', e);
+    }
   }
 
   _handleControl(msg) {
+    this._log('control', msg.type, msg.id);
+
     if (msg.type === 'file-start') {
       this.receiving = {
         id: msg.id,
@@ -134,33 +162,33 @@ export class FileTransfer {
         direction: 'receive',
       });
     } else if (msg.type === 'file-end') {
-      if (this.receiving && this.receiving.id === msg.id) {
-        const r = this.receiving;
-        const blob = new Blob(r.chunks, { type: r.mime });
-        const url = URL.createObjectURL(blob);
-
-        this.ui.completeTransfer(r.id, 'receive', () => {
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = r.name;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-        });
-
-        this.receiving = null;
+      const r = this.receiving;
+      if (!r || r.id !== msg.id) {
+        this._log('file-end without matching receiving', msg.id);
+        return;
       }
+
+      const blob = new Blob(r.chunks, { type: r.mime });
+      this._log('blob ready', r.name, blob.size, 'bytes');
+
+      this.ui.completeTransfer(r.id, 'receive', () => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = r.name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+      });
+
+      this.receiving = null;
     }
   }
 
-  _handleChunk(data) {
+  _handleChunk(buf) {
     if (!this.receiving) return;
-
-    let buf = null;
-    if (data instanceof ArrayBuffer) buf = data;
-    else if (data instanceof Uint8Array) buf = data.buffer;
-    else if (data && data.buffer instanceof ArrayBuffer) buf = data.buffer;
-    else return;
+    if (!(buf instanceof ArrayBuffer)) return;
 
     this.receiving.chunks.push(buf);
     this.receiving.bytesReceived += buf.byteLength;
@@ -175,18 +203,20 @@ export class FileTransfer {
     this.queue = [];
     this.processing = false;
     this.receiving = null;
-    this.currentSendId = null;
   }
 
   reset() {
     this.queue = [];
     this.processing = false;
     this.receiving = null;
-    this.currentSendId = null;
   }
 
   _genId() {
-    if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
-    return 'id-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
+    try {
+      if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+      }
+    } catch (e) {}
+    return 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
   }
 }
