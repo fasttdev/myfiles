@@ -1,27 +1,136 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hello World</title>
-    <style>
-        body {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            font-family: Arial, sans-serif;
-        }
-        h1 {
-            color: white;
-            font-size: 4rem;
-            text-shadow: 2px 2px 8px rgba(0,0,0,0.3);
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#05070d">
+<title>MYFILE — P2P Device Transfer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/components.css">
+<link rel="stylesheet" href="css/screens.css">
 </head>
 <body>
-    <h1>Hello, World! 👋</h1>
+
+<div class="app">
+  <!-- ============ TOPBAR ============ -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo-mark"></div>
+      <div>
+        <span class="brand-name">MYFILE</span>
+        <span class="brand-sub">P2P Transfer</span>
+      </div>
+    </div>
+    <div class="status-pill" id="statusPill">
+      <span class="dot"></span>
+      <span id="statusText">Siap</span>
+    </div>
+  </header>
+
+  <main class="main">
+
+    <!-- ============ SCREEN: HOME ============ -->
+    <section class="screen active" id="screen-home">
+      <div class="hero">
+        <h1>Kirim File <span class="grad">Tanpa Batas</span></h1>
+        <p>Transfer langsung antar device via WebRTC. File tidak singgah di server, tidak ada akun, tidak ada batas ukuran.</p>
+      </div>
+
+      <div class="grid-2">
+        <!-- Terima -->
+        <div class="clay-card action-card">
+          <div class="action-icon">
+            <svg viewBox="0 0 24 24">
+              <path d="M12 3v12"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <path d="M5 21h14"/>
+            </svg>
+          </div>
+          <h3>Terima File</h3>
+          <p>Buat room dan bagikan kode ke device pengirim.</p>
+          <button class="btn btn-primary full" id="btnHost">Buat Room</button>
+        </div>
+
+        <!-- Kirim -->
+        <div class="clay-card action-card">
+          <div class="action-icon">
+            <svg viewBox="0 0 24 24">
+              <path d="M12 21V9"/>
+              <polyline points="7 14 12 9 17 14"/>
+              <path d="M5 3h14"/>
+            </svg>
+          </div>
+          <h3>Kirim File</h3>
+          <p>Masukkan kode room yang diberikan device penerima.</p>
+          <div class="join-row">
+            <input class="input" id="joinInput" maxlength="6" placeholder="KODE"
+                   autocomplete="off" autocapitalize="characters" spellcheck="false" inputmode="text">
+            <button class="btn btn-primary" id="btnJoin">Gabung</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ SCREEN: WAIT ============ -->
+    <section class="screen" id="screen-wait">
+      <div class="clay-card wait-card">
+        <div class="wait-header">
+          <span class="tag">Room Aktif</span>
+          <h2>Bagikan kode ini ke device pengirim</h2>
+        </div>
+        <div class="code-display" id="roomCode">------</div>
+        <div class="waiting">
+          <div class="spinner"></div>
+          <span>Menunggu device terhubung...</span>
+        </div>
+        <button class="btn btn-ghost full" id="btnCancelWait">Batal</button>
+      </div>
+    </section>
+
+    <!-- ============ SCREEN: TRANSFER ============ -->
+    <section class="screen" id="screen-transfer">
+      <div class="transfer-head">
+        <div class="conn-info">
+          <span class="dot"></span>
+          <span id="connLabel">Terhubung</span>
+        </div>
+        <button class="btn btn-danger small" id="btnDisconnect">Putuskan</button>
+      </div>
+
+      <div class="clay-card drop-card" id="dropCard">
+        <div class="drop-inner">
+          <svg class="drop-icon" viewBox="0 0 24 24">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          <h3>Tarik file ke sini</h3>
+          <p>atau klik untuk memilih dari device</p>
+          <button class="btn btn-primary" id="btnPickFile" type="button">Pilih File</button>
+          <input type="file" id="fileInput" multiple hidden>
+        </div>
+      </div>
+
+      <div class="transfer-list-head">
+        <h3>Transfer</h3>
+        <span class="muted" id="transferCount">0 file</span>
+      </div>
+      <div class="transfer-list" id="transferList">
+        <div class="empty-state">Belum ada transfer</div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">MYFILE &middot; Direct peer-to-peer transfer via WebRTC</footer>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script type="module" src="js/app.js"></script>
 </body>
 </html>
